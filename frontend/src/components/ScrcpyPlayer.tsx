@@ -61,6 +61,8 @@ export function ScrcpyPlayer({
   const accumulatedScrollRef = useRef<{
     deltaY: number;
     lastTime: number;
+    mouseX: number;
+    mouseY: number;
   } | null>(null);
 
   // Device actual resolution (not video stream resolution)
@@ -248,12 +250,24 @@ export function ScrcpyPlayer({
       accumulatedScrollRef.current = {
         deltaY: 0,
         lastTime: now,
+        mouseX: event.clientX,
+        mouseY: event.clientY,
       };
     }
 
-    // Accumulate scroll delta
+    // Accumulate scroll delta and track average mouse position
     accumulatedScrollRef.current.deltaY += currentDelta;
     accumulatedScrollRef.current.lastTime = now;
+    // Update mouse position as weighted average to smooth movement
+    const currentWeight = 0.3; // Weight for new mouse position
+    accumulatedScrollRef.current.mouseX = Math.round(
+      accumulatedScrollRef.current.mouseX * (1 - currentWeight) +
+        event.clientX * currentWeight
+    );
+    accumulatedScrollRef.current.mouseY = Math.round(
+      accumulatedScrollRef.current.mouseY * (1 - currentWeight) +
+        event.clientY * currentWeight
+    );
 
     // Clear existing timeout
     if (wheelTimeoutRef.current) {
@@ -267,10 +281,14 @@ export function ScrcpyPlayer({
       const totalDelta = accumulatedScrollRef.current;
       accumulatedScrollRef.current = null; // Reset accumulation
 
-      // Get mouse position for scroll center
+      // Validate totalDelta has required properties
+      if (totalDelta.mouseX === undefined || totalDelta.mouseY === undefined)
+        return;
+
+      // Get accumulated mouse position
       const rect = videoRef.current.getBoundingClientRect();
-      const mouseX = event.clientX;
-      const mouseY = event.clientY;
+      const mouseX = totalDelta.mouseX;
+      const mouseY = totalDelta.mouseY;
 
       // Calculate scroll distance from accumulated delta
       const scrollDistance = Math.abs(totalDelta.deltaY);
@@ -299,37 +317,70 @@ export function ScrcpyPlayer({
       const actualCenterX = Math.round(mouseDeviceCoords.x * scaleX);
       const actualCenterY = Math.round(mouseDeviceCoords.y * scaleY);
 
-      // Calculate swipe start and end points (vertical swipe)
+      // Calculate swipe start and end points (inverted: scroll down = swipe up)
       let startY, endY;
       if (totalDelta.deltaY > 0) {
-        // Scroll down - swipe from top to bottom
-        startY = actualCenterY - scrollDistance / 2;
-        endY = actualCenterY + scrollDistance / 2;
+        // Scroll down - swipe up (from mouse position upward)
+        startY = actualCenterY;
+        endY = actualCenterY - scrollDistance;
       } else {
-        // Scroll up - swipe from bottom to top
-        startY = actualCenterY + scrollDistance / 2;
-        endY = actualCenterY - scrollDistance / 2;
+        // Scroll up - swipe down (from mouse position downward)
+        startY = actualCenterY;
+        endY = actualCenterY + scrollDistance;
       }
 
-      // Show scroll indicator at mouse position
+      // Show scroll indicator aligned with actual swipe trajectory
+      // Calculate visual distance using device height to display height ratio (1:1 mapping)
+      const deviceScrollDistance = Math.abs(endY - startY);
+      const visualDistance = Math.max(
+        (deviceScrollDistance / deviceResolution.height) * rect.height, // Direct 1:1 mapping
+        20
+      );
+
+      // Animation duration proportional to actual swipe duration
+      const animationDuration = Math.min(
+        Math.max(swipeDuration * 0.8, 200),
+        800
+      );
+
+      // Create moving ball indicator from mouse position
       const scrollIndicator = document.createElement('div');
       scrollIndicator.style.cssText = `
         position: fixed;
         left: ${mouseX}px;
-        top: ${
-          totalDelta.deltaY > 0
-            ? mouseY - scrollDistance / 4
-            : mouseY + scrollDistance / 4
-        }px;
-        width: 2px;
-        height: ${scrollDistance / 2}px;
-        background: linear-gradient(${totalDelta.deltaY > 0 ? 'to bottom' : 'to top'},
-          rgba(59, 130, 246, 0.8), rgba(59, 130, 246, 0.2));
+        top: ${mouseY}px;
+        width: 20px;
+        height: 20px;
         pointer-events: none;
         z-index: 50;
-        transform: translateX(-50%);
-        animation: scrollFade 0.5s ease-out;
+        transform: translateX(-50%) translateY(-50%);
+        background: radial-gradient(circle,
+          rgba(59, 130, 246, 0.8) 0%,
+          rgba(59, 130, 246, 0.4) 30%,
+          rgba(59, 130, 246, 0.2) 60%,
+          rgba(59, 130, 246, 0) 100%);
+        border-radius: 50%;
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.6);
       `;
+
+      // Create moving ball animation from mouse position
+      const startTime = Date.now();
+      const moveInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progressRatio = Math.min(elapsed / animationDuration, 1);
+
+        const ballTop =
+          totalDelta.deltaY > 0
+            ? mouseY - visualDistance * progressRatio
+            : mouseY + visualDistance * progressRatio;
+
+        scrollIndicator.style.top = ballTop + 'px';
+
+        if (progressRatio >= 1) {
+          clearInterval(moveInterval);
+        }
+      }, 16); // 60fps
+
       document.body.appendChild(scrollIndicator);
 
       // Remove scroll indicator after animation
@@ -337,7 +388,8 @@ export function ScrcpyPlayer({
         if (scrollIndicator.parentNode) {
           scrollIndicator.parentNode.removeChild(scrollIndicator);
         }
-      }, 500);
+        clearInterval(moveInterval);
+      }, animationDuration);
 
       try {
         const result = await sendSwipe(
