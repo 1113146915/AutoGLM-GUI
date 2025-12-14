@@ -8,6 +8,8 @@ import threading
 import time
 import webbrowser
 
+from AutoGLM_GUI import __version__
+
 # Default configuration
 DEFAULT_MODEL_NAME = "autoglm-phone-9b"
 
@@ -146,6 +148,7 @@ def main() -> None:
     print("=" * 50)
     print("  AutoGLM-GUI - Phone Agent Web Interface")
     print("=" * 50)
+    print(f"  Version:    {__version__}")
     print()
     print(f"  Server:     http://{args.host}:{args.port}")
     print()
