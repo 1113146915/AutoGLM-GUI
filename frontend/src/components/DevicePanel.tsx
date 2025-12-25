@@ -152,6 +152,7 @@ export function DevicePanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const screenshotFetchingRef = useRef(false);
   const hasAutoInited = useRef(false);
+  const prevConfigRef = useRef<GlobalConfig | null>(null);
 
   const handleInit = useCallback(async () => {
     if (!config) return;
@@ -220,6 +221,29 @@ export function DevicePanel({
       setHistoryItems([]);
     }
   };
+  // Re-initialize when config changes (for already initialized devices)
+  useEffect(() => {
+    // Skip if not initialized yet or no config
+    if (!initialized || !config) return;
+
+    // Check if config actually changed
+    const prevConfig = prevConfigRef.current;
+    if (
+      prevConfig &&
+      (prevConfig.base_url !== config.base_url ||
+        prevConfig.model_name !== config.model_name ||
+        prevConfig.api_key !== config.api_key)
+    ) {
+      // Config changed, re-initialize
+      console.log(
+        `[DevicePanel] Config changed for device ${deviceId}, re-initializing...`
+      );
+      handleInit();
+    }
+
+    // Update previous config
+    prevConfigRef.current = config;
+  }, [config, initialized, deviceId, handleInit]);
 
   const handleSend = useCallback(async () => {
     const inputValue = input.trim();
